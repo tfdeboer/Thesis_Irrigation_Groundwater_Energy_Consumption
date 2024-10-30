@@ -1,0 +1,64 @@
+import pickle
+import pandas as pd
+import geopandas as gpd
+import matplotlib.pyplot as plt
+from shapely.geometry import Point
+
+# Inlezen van het opgeslagen pklz-bestand
+outputDirectory = '../../input/timeseries_gw_Netherlands_hydropandas/'
+pklz_file = outputDirectory + 'gw_bro_Netherlands.pklz'
+
+with open(pklz_file, 'rb') as f:
+    gw_bro = pickle.load(f)
+
+# Inspecteren van de metadata om de eenheden te controleren
+print(gw_bro[['unit']].drop_duplicates())
+
+# Shapefile van Nederland inlezen
+shapefile_path = '/Users/tomdeboer/Documents/Universiteit/Master/Scriptie/Scriptie_240408_Tom_de_Boer/developing/input/shp/NL/Netherlands.shp'
+nl_shapefile = gpd.read_file(shapefile_path)
+
+# Data filteren op de periode 1958 t/m 2015
+start_date = pd.Timestamp('1958-01-01')
+end_date = pd.Timestamp('2015-12-31')
+
+# Functie om de gemiddelde waterstand in de periode te berekenen
+def mean_water_level_in_period(obs, start_date, end_date):
+    period_data = obs[(obs.index >= start_date) & (obs.index <= end_date)]
+    return period_data['value'].mean() if not period_data.empty else None
+
+# Initialiseren van lijst voor gemiddelde waterstanden
+average_water_levels = []
+
+# Itereren door de rijen om de gemiddelde waterstand te berekenen
+for index, row in gw_bro.iterrows():
+    x = row['x']
+    y = row['y']
+    time_series_data = row['obs']
+    if not time_series_data.empty:
+        time_series_data = pd.DataFrame(time_series_data)
+        time_series_data.index = pd.to_datetime(time_series_data.index)  # Zet de index om naar datetime
+        time_series_data.columns = ['value', 'flag', 'comment']  # Pas de kolomnamen aan naar behoefte
+        mean_water_level = mean_water_level_in_period(time_series_data, start_date, end_date)
+        if mean_water_level is not None:
+            average_water_levels.append({'geometry': Point(x, y), 'mean_water_level': mean_water_level})
+
+# Omzetten naar GeoDataFrame
+gdf = gpd.GeoDataFrame(average_water_levels, crs='EPSG:28992')  # EPSG:28992 is de code voor het Rijksdriehoekstelsel
+gdf = gdf.to_crs(nl_shapefile.crs)  # Omzetten naar dezelfde CRS als de shapefile
+
+# Bepaal de min en max waarden voor de legenda
+vmin = 0  # Stel een realistisch minimum in, bijvoorbeeld 0 voor NAP
+vmax = gdf['mean_water_level'].quantile(0.95)  # Gebruik een percentiel om outliers te vermijden
+
+# Plotten van de shapefile en de gemiddelde waterstanden
+fig, ax = plt.subplots(figsize=(10, 10))
+nl_shapefile.plot(ax=ax, color='white', edgecolor='black')
+gdf.plot(ax=ax, column='mean_water_level', cmap='coolwarm', legend=True, markersize=10, vmin=vmin, vmax=vmax)
+plt.title('Gemiddelde Grondwaterstand (1958-2015)')
+plt.xlabel('Longitude')
+plt.ylabel('Latitude')
+plt.show()
+
+
+
